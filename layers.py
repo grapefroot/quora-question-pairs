@@ -58,8 +58,6 @@ class Seq2SeqAttention(torch.nn.Module):
     coef_1 = coef_matrix.sum(dim=2)
     coef_2 = coef_matrix.sum(dim=1)
 
-    print(mask_1.shape)
-    print(coef_1.shape)
     coef_1 = masked_softmax(coef_1, mask_1, dim=1).unsqueeze(2)
     coef_2 = masked_softmax(coef_2, mask_2, dim=1).unsqueeze(2)
 
