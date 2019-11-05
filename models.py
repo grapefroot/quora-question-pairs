@@ -1,3 +1,5 @@
+import torch
+
 class SentenceClf(torch.nn.Module):
     def __init__(self, emb_model):
         super(SentenceClf, self).__init__()
@@ -19,7 +21,7 @@ class SentenceClf(torch.nn.Module):
             torch.nn.Dropout(),
             torch.nn.Linear(256, 2)
         ).cuda()
-        self.attn_block = attn_block.cuda()
+       # self.attn_block = attn_block.cuda()
         
     
     def forward(self, enc_1, mask_1, enc_2, mask_2):
@@ -32,9 +34,12 @@ class SentenceClf(torch.nn.Module):
             hidden_1_count = mask_1.sum(axis=1, keepdims=True)
             hidden_2_count = mask_2.sum(axis=1, keepdims=True)
         
-            first = (hidden_1 * mask_1.unsqueeze(2)).sum(axis=1) / hidden_1_count
-            second = (hidden_2 * mask_2.unsqueeze(2)).sum(axis=1) / hidden_2_count
+            first = (hidden_1).sum(axis=1) / hidden_1_count
+            second = (hidden_2).sum(axis=1) / hidden_2_count
         
+        
+#             first = (hidden_1 * mask_1.unsqueeze(2)).sum(axis=1) / hidden_1_count
+#             second = (hidden_2 * mask_2.unsqueeze(2)).sum(axis=1) / hidden_2_count        
 #         first, second = self.attn_block(hidden_1, mask_1, hidden_2, mask_2)
     
         #input: batch_size x word_size x embed_dim

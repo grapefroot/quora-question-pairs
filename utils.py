@@ -1,10 +1,16 @@
 import numpy as np
+import pandas as pd
 import torch
 import os
 from tqdm.autonotebook import tqdm, trange
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score, accuracy_score
 from torch.utils.data import DataLoader, Dataset
+from transformers.transformers import BertTokenizer, BertModel, BertConfig, BertForSequenceClassification
+from transformers import transformers
+from models import SentenceClf
+
 
 
 def encode_str(string, *args, **kwargs):
@@ -108,29 +114,6 @@ def evaluate(model, dl_val):
     f1 = f1_score(labels, y_pred)
     return zip(keys, (ll, accuracy, f1))
 
-def process_test(model, dl_test):
-    preds = []
-    model.eval()
-    for batch in tqdm(dl_test, desc='Test Progress', position=0):
-        with torch.no_grad():
-            tup = tuple(item.cuda() for item in batch[1:])
-            model_input = dict(zip(['input_ids', 'attention_mask',  'token_type_ids'], tup))
-            logits = model(**model_input)[0]
-            
-        if preds is None:
-            preds = [logits.detach().cpu().softmax(axis=1).numpy()[:, 1]]
-        else:
-            preds.append(logits.detach().cpu().softmax(axis=1).numpy()[:, 1])
-      #  print(len(preds))
-    return preds
-
-def merge_submissions_to_replicate(sub_1_ans, sub_2_ans):
-    #https://www.kaggle.com/c/quora-question-pairs/discussion/31179#latest-203203
-    a = 0.165 / 0.37
-    b = (1 - 0.165) / (1 - 0.37)
-    merged = sub_1_ans * 0.25 + sub_2_ans * 0.75
-    return a * merged / (a * merged + b * (1 - merged))
-
 def cache_ds(df, tokenizer, save=None, train=True):
     def process(str_1, str_2):
         max_len=128
@@ -146,7 +129,7 @@ def cache_ds(df, tokenizer, save=None, train=True):
         token_type_ids += [pad_token_segment_id] * pad_len
         return input_ids, attn_mask, token_type_ids
     
-    if save is not None and os.exists(save):
+    if save is not None and os.path.exists(save):
         print('Trying to load from file {}'.format(save))
         return torch.load(save)
     
@@ -196,9 +179,90 @@ def cache_ds(df, tokenizer, save=None, train=True):
         )
     
     if save is not None:
-        if os.exists(save):
+        if os.path.exists(save):
             print('File exists. Appending {} to a file name'.format('_1'))
             torch.save(ds, save + '_1')
         else:
             torch.save(ds, save)
     return ds
+
+def prepare_submission(sc, test_dl):
+    #for model 1
+    ans = []
+    sc.clf.eval()
+    for q1, m1, q2, m2 in tqdm(test_dl, position=0):
+        with torch.no_grad():
+            ans.append(sc(q1.cuda(), m1.cuda(), q2.cuda(), m2.cuda()).softmax(dim=1)[:, 1].cpu().numpy())
+    return np.concatenate(ans)
+
+def process_test(model, dl_test):
+    #for model 2
+    preds = []
+    model.eval()
+    for batch in tqdm(dl_test, desc='Test Progress', position=0):
+        with torch.no_grad():
+            tup = tuple(item.cuda() for item in batch[1:])
+            model_input = dict(zip(['input_ids', 'attention_mask',  'token_type_ids'], tup))
+            logits = model(**model_input)[0]
+
+            preds.append(logits.detach().softmax(axis=1)[:, 1].cpu().numpy())
+    #  print(len(preds))
+    return np.concatenate(preds)
+
+def get_sub_1(df):
+    #for evaluation
+    #explore this interactively at model1.ipynb
+    model_weights = 'bert-base-uncased'
+    tokenizer = BertTokenizer.from_pretrained(model_weights, do_lower_case=False)
+    model=BertModel.from_pretrained(model_weights, output_hidden_states=True).cuda()
+    model.eval()
+    sc = SentenceClf(model)
+    sc.clf.load_state_dict(torch.load('models/clf_head_weight'))
+    model.eval()
+    test_ds = QuoraSentences(df, tokenizer, train=False)
+    test_dl = DataLoader(test_ds, batch_size=100, collate_fn=collate_fn_test)
+    res_cpu = prepare_submission(sc, test_dl)
+    return res_cpu
+    
+def get_sub_2(df):
+    #explore this interactively at model2.ipynb
+    model_weights = 'bert-base-cased-finetuned-mrpc'
+    tokenizer = BertTokenizer.from_pretrained(model_weights, do_lower_case=False)
+    model=BertForSequenceClassification.from_pretrained(model_weights, output_hidden_states=True).cuda()
+    model.load_state_dict(torch.load('./models/checkpoint_iter_24983_2019-11-04 03:37:20.323658')['model_state_dict'])
+    model.eval()
+    cached_test_ds = cache_ds(df, tokenizer, save='./data/test_ds_CASED_cached_123', train=False)
+    test_sampler = torch.utils.data.SequentialSampler(cached_test_ds)
+    dl_test = DataLoader(cached_test_ds, batch_size=100, sampler=test_sampler)
+    test_predictions = process_test(model, dl_test)
+    return test_predictions
+
+def merge_submissions_to_replicate(sub_1_ans, sub_2_ans):
+    #https://www.kaggle.com/c/quora-question-pairs/discussion/31179#latest-203203
+    a = 0.165 / 0.37
+    b = (1 - 0.165) / (1 - 0.37)
+    merged = sub_1_ans * 0.25 + sub_2_ans * 0.75
+    return a * merged / (a * merged + b * (1 - merged))
+
+def replicate(final_path=None):
+    if final_path is None:
+        raise Exception('Provide path for submission')
+    
+    test = pd.read_csv('data/test.csv', index_col='test_id')[:200]
+    print('Replicating. Buckle up...')
+    
+    print('Calculating model 1 outputs...')
+    sub_1 = get_sub_1(test.dropna())
+    
+    print('Calculating model 2 outputs...')
+    sub_2 = get_sub_2(test.dropna())
+    
+    print('Merging...')
+    merged = merge_submissions_to_replicate(sub_1, sub_2)
+    
+    test['is_duplicate'] = 0
+    test.loc[test.dropna().index, 'is_duplicate'] = merged
+    
+    print('Saving to {}'.format(final_path))
+    test[['is_duplicate']].to_csv(final_path)
+    print('Successfully saved. Enjoy')
