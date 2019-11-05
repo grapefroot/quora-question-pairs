@@ -217,7 +217,7 @@ def get_sub_1(df):
     model=BertModel.from_pretrained(model_weights, output_hidden_states=True).cuda()
     model.eval()
     sc = SentenceClf(model)
-    sc.clf.load_state_dict(torch.load('models/clf_head_weight'))
+    sc.clf.load_state_dict(torch.load('./models/clf_head_weight'))
     model.eval()
     test_ds = QuoraSentences(df, tokenizer, train=False)
     test_dl = DataLoader(test_ds, batch_size=100, collate_fn=collate_fn_test)
@@ -231,7 +231,7 @@ def get_sub_2(df):
     model=BertForSequenceClassification.from_pretrained(model_weights, output_hidden_states=True).cuda()
     model.load_state_dict(torch.load('./models/checkpoint_iter_24983_2019-11-04 03:37:20.323658')['model_state_dict'])
     model.eval()
-    cached_test_ds = cache_ds(df, tokenizer, save='./data/test_ds_CASED_cached_123', train=False)
+    cached_test_ds = cache_ds(df, tokenizer, save='./data/test_ds_CASED_cached', train=False)
     test_sampler = torch.utils.data.SequentialSampler(cached_test_ds)
     dl_test = DataLoader(cached_test_ds, batch_size=100, sampler=test_sampler)
     test_predictions = process_test(model, dl_test)
@@ -248,7 +248,7 @@ def replicate(final_path=None):
     if final_path is None:
         raise Exception('Provide path for submission')
     
-    test = pd.read_csv('data/test.csv', index_col='test_id')[:200]
+    test = pd.read_csv('data/test.csv', index_col='test_id')
     print('Replicating. Buckle up...')
     
     print('Calculating model 1 outputs...')
